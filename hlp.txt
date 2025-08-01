@@ -1,4 +1,5 @@
-DIR - List files
-WHO - Show user
-ASK - Submit a question
-HLP - Show this help message
+Available commands:
+DIR - List directory contents
+WHO - Show current user
+ASK - Ask a question via AI (model: llama3)
+HLP - Show this help text

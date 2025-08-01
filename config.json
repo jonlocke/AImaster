@@ -1,6 +1,6 @@
 {
   "com_port": "COM7",
-  "send_delay_ms": 200,
-  "initial_message": "Welcome to the shell",
+  "send_delay_ms": 50,
+  "initial_message": "Welcome to the Ai Interface",
   "http_timeout_ms": 60000
 }

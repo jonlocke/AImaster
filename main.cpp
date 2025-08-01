@@ -12,10 +12,14 @@
 #include <sstream>
 #include <cstdio>
 #include <ctime>
+#include <nlohmann/json.hpp>
 
 #pragma comment(lib, "winhttp.lib")
+
 int httpTimeoutMs = 60000;
 std::unordered_map<std::string, std::string> commandMap;
+
+using json = nlohmann::json;
 
 struct ParsedCommand {
     std::string base;
@@ -27,25 +31,6 @@ std::string Trim(const std::string& s) {
     size_t end = s.find_last_not_of(" \t\r\n");
     return (start == std::string::npos) ? "" : s.substr(start, end - start + 1);
 }
-#include <iomanip>
-#include <sstream>
-
-std::string UriDecode(const std::string& encoded) {
-    std::ostringstream decoded;
-    for (size_t i = 0; i < encoded.length(); ++i) {
-        if (encoded[i] == '%' && i + 2 < encoded.length()) {
-            std::string hex = encoded.substr(i + 1, 2);
-            char c = static_cast<char>(std::stoi(hex, nullptr, 16));
-            decoded << c;
-            i += 2;
-        } else if (encoded[i] == '+') {
-            decoded << ' ';
-        } else {
-            decoded << encoded[i];
-        }
-    }
-    return decoded.str();
-}
 
 ParsedCommand ParseCommandEntry(const std::string& entry) {
     ParsedCommand result;
@@ -54,7 +39,6 @@ ParsedCommand ParseCommandEntry(const std::string& entry) {
         result.base = entry;
         return result;
     }
-
     result.base = entry.substr(0, eq);
     std::string rest = entry.substr(eq + 1);
     size_t next_eq = rest.find('=');
@@ -65,14 +49,12 @@ ParsedCommand ParseCommandEntry(const std::string& entry) {
     } else {
         result.params["MODEL"] = rest;
     }
-
     return result;
 }
 
 bool LoadCommandMap(const std::string& filename) {
     std::ifstream file(filename);
     if (!file.is_open()) return false;
-
     std::string line;
     while (std::getline(file, line)) {
         size_t sep = line.find(':');
@@ -98,7 +80,6 @@ void SendBufferToSerial(const std::string& buffer, HANDLE hSerial, int delayMs, 
     std::string fullBuffer = buffer;
     if (appendCRLF)
         fullBuffer += crOnly ? "\r" : "\r\n";
-
     for (char c : fullBuffer) {
         DWORD written;
         WriteFile(hSerial, &c, 1, &written, NULL);
@@ -137,7 +118,23 @@ std::string ReadLineFromSerial(HANDLE hSerial) {
     return line;
 }
 
-extern int httpTimeoutMs;
+std::string UriDecode(const std::string& encoded) {
+    std::ostringstream decoded;
+    for (size_t i = 0; i < encoded.length(); ++i) {
+        if (encoded[i] == '%' && i + 2 < encoded.length()) {
+            std::string hex = encoded.substr(i + 1, 2);
+            char c = static_cast<char>(std::stoi(hex, nullptr, 16));
+            decoded << c;
+            i += 2;
+        } else if (encoded[i] == '+') {
+            decoded << ' ';
+        } else {
+            decoded << encoded[i];
+        }
+    }
+    return decoded.str();
+}
+
 std::string SendToOllama(const std::string& prompt, const std::string& model) {
     HINTERNET hSession = WinHttpOpen(L"AskClient/1.0", WINHTTP_ACCESS_TYPE_NO_PROXY, NULL, NULL, 0);
     if (!hSession) return "Failed to open WinHTTP session.";
@@ -150,13 +147,7 @@ std::string SendToOllama(const std::string& prompt, const std::string& model) {
         return "Failed to connect to Ollama.";
     }
 
-    HINTERNET hRequest = WinHttpOpenRequest(
-        hConnect, L"POST", L"/api/generate",
-        NULL, WINHTTP_NO_REFERER,
-        WINHTTP_DEFAULT_ACCEPT_TYPES,
-        0
-    );
-
+    HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"POST", L"/api/generate", NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, 0);
     if (!hRequest) {
         WinHttpCloseHandle(hConnect);
         WinHttpCloseHandle(hSession);
@@ -167,16 +158,7 @@ std::string SendToOllama(const std::string& prompt, const std::string& model) {
     oss << "{ \"model\": \"" << model << "\", \"prompt\": \"" << prompt << "\", \"stream\": false }";
     std::string payload = oss.str();
 
-    BOOL result = WinHttpSendRequest(
-        hRequest,
-        L"Content-Type: application/json\r\n",
-        -1L,
-        (LPVOID)payload.c_str(),
-        (DWORD)payload.length(),
-        (DWORD)payload.length(),
-        0
-    );
-
+    BOOL result = WinHttpSendRequest(hRequest, L"Content-Type: application/json\r\n", -1L, (LPVOID)payload.c_str(), (DWORD)payload.length(), (DWORD)payload.length(), 0);
     if (!result || !WinHttpReceiveResponse(hRequest, NULL)) {
         WinHttpCloseHandle(hRequest);
         WinHttpCloseHandle(hConnect);
@@ -211,9 +193,14 @@ std::string SendToOllama(const std::string& prompt, const std::string& model) {
         pos += 12;
         size_t end = response.find("\"", pos);
         std::string raw = response.substr(pos, end - pos);
-        return UriDecode(raw);
+        std::string decoded = UriDecode(raw);
+        for (size_t i = 0; i + 1 < decoded.size(); ++i) {
+            if (decoded[i] == '\\' && decoded[i+1] == 'n') {
+                decoded.replace(i, 2, "\r");
+            }
+        }
+        return decoded;
     }
-
 
     return "Ollama response missing.";
 }
@@ -230,7 +217,7 @@ void HandleAskCommand(HANDLE hSerial, int delayMs, const std::string& model) {
 void HandleHelpCommand(HANDLE hSerial, int delayMs) {
     std::ifstream helpFile("help.txt");
     if (!helpFile.is_open()) {
-        SendBufferToSerial("\rHelp file not found.", hSerial, delayMs);
+        SendBufferToSerial("Help file not found.", hSerial, delayMs);
         return;
     }
     std::string line;
@@ -243,7 +230,7 @@ void HandleHelpCommand(HANDLE hSerial, int delayMs) {
 void ExecuteCommandAndSendOutput(const std::string& command, HANDLE hSerial, int delayMs) {
     auto it = commandMap.find(command);
     if (it == commandMap.end()) {
-        SendBufferToSerial("\rUnknown command: " + command, hSerial, delayMs);
+        SendBufferToSerial("\nUnknown command: " + command, hSerial, delayMs);
         SendBufferToSerial("8->", hSerial, delayMs, false);
         return;
     }
@@ -268,7 +255,7 @@ void ExecuteCommandAndSendOutput(const std::string& command, HANDLE hSerial, int
 
     FILE* pipe = _popen(parsed.base.c_str(), "r");
     if (!pipe) {
-        SendBufferToSerial("\rFailed to run command", hSerial, delayMs);
+        SendBufferToSerial("Failed to run command", hSerial, delayMs);
         SendBufferToSerial("8->", hSerial, delayMs, false);
         return;
     }
@@ -276,15 +263,12 @@ void ExecuteCommandAndSendOutput(const std::string& command, HANDLE hSerial, int
     char line[256];
     while (fgets(line, sizeof(line), pipe)) {
         std::string lineStr(line);
-        lineStr.erase(lineStr.find_last_not_of("\r\n") + 1);
+        lineStr.erase(lineStr.find_last_not_of("") + 1);
         SendBufferToSerial(lineStr, hSerial, delayMs);
     }
     _pclose(pipe);
     SendBufferToSerial("8->", hSerial, delayMs, false);
 }
-
-#include <nlohmann/json.hpp>
-using json = nlohmann::json;
 
 int main(int argc, char* argv[]) {
     std::string comPort, initialMessage;
@@ -310,17 +294,16 @@ int main(int argc, char* argv[]) {
     }
 
     if (!LoadCommandMap("cmds.csv")) {
-        std::cerr << "Failed to load cmds.csv\n";
+        std::cerr << "Failed to load cmds.csv"; 
         return 1;
     }
 
     std::wstring portArgW(comPort.begin(), comPort.end());
     std::wstring fullPortName;
- if (portArgW.rfind(L"\\\\.\\", 0) == 0)
-    fullPortName = portArgW;
-else
-    fullPortName = L"\\\\.\\\\" + portArgW;
-
+    if (portArgW.rfind(L"\\\\.\\", 0) == 0)
+        fullPortName = portArgW;
+    else
+        fullPortName = L"\\\\.\\" + portArgW;
 
     HANDLE hSerial = CreateFile(fullPortName.c_str(), GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
     if (hSerial == INVALID_HANDLE_VALUE) {

@@ -1,0 +1,6 @@
+{
+  "com_port": "COM7",
+  "send_delay_ms": 200,
+  "initial_message": "Welcome to the shell",
+  "http_timeout_ms": 60000
+}

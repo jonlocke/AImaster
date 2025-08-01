@@ -1,0 +1,4 @@
+DIR - List files
+WHO - Show user
+ASK - Submit a question
+HLP - Show this help message

@@ -1,0 +1,4 @@
+DIR:dir
+WHO:whoami
+LST:dir c:\
+ASK:ASK=MODEL=LLAMA3.2

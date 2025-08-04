@@ -1,0 +1,5 @@
+Available commands:
+DIR - List directory contents
+WHO - Show current user
+ASK - Ask a question via AI (model: llama3)
+HLP - Show this help text

@@ -1,5 +1,5 @@
 {
-  "com_port": "COM7",
+  "com_port": "COM8",
   "send_delay_ms": 50,
   "initial_message": "Welcome to the Ai Interface",
   "http_timeout_ms": 60000
